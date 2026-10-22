@@ -1,0 +1,6 @@
+# Student development images only. Teacher-signed compose.yaml remains unchanged.
+services:
+  api:
+    image: cinelab-student/cinelab-api:exp3-20261022-a1
+  web:
+    image: cinelab-student/cinelab-web:exp3-20261022-a2

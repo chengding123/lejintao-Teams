@@ -1,0 +1,15 @@
+{
+  "status": "completed",
+  "runtime_mode": "evaluation",
+  "algorithm": "content",
+  "model_version": "content-genres-v1",
+  "task_sha256": "8a802dbf621ae9ab3ba7fa62245a08c3d0d2016b52d1914240f8b174433c81a2",
+  "model_manifest_sha256": "4071e6f6f9f465a7f0eaa590ddd02ac86b88712aadc9fe746d877093dca0615e",
+  "dataset_version": "rec-course-v3-train5-1.0.0",
+  "split_version": "temporal-v1-cold500-train5-v3",
+  "schema_version": "student-eight-v3",
+  "partition": "validation",
+  "user_count": 4209,
+  "precision_at_10": 0.0040389641244951225,
+  "recall_at_10": 0.007347132699523584
+}

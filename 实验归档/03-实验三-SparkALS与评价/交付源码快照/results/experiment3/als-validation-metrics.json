@@ -1,0 +1,15 @@
+{
+  "status": "completed",
+  "runtime_mode": "evaluation",
+  "algorithm": "als",
+  "model_version": "spark-als-explicit-v1",
+  "task_sha256": "8a802dbf621ae9ab3ba7fa62245a08c3d0d2016b52d1914240f8b174433c81a2",
+  "model_manifest_sha256": "bcf3368fe1204d0e36e068459c7037909c70b49fa1bb89b57d0e1b1a704ea2b5",
+  "dataset_version": "rec-course-v3-train5-1.0.0",
+  "split_version": "temporal-v1-cold500-train5-v3",
+  "schema_version": "student-eight-v3",
+  "partition": "validation",
+  "user_count": 4209,
+  "precision_at_10": 0.0010216203373722976,
+  "recall_at_10": 0.0009008563891098097
+}

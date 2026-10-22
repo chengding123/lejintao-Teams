@@ -1,0 +1,58 @@
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useAuth } from '../stores/auth'
+import http, { ApiError } from '../api'
+import { useRemote } from '../composables/useRemote'
+import type { Algorithm, EvaluationSummary, HistoryUser, Movie, Page } from '../types'
+import StatePanel from '../components/StatePanel.vue'
+import PageNav from '../components/PageNav.vue'
+import AlgorithmPanel from '../components/AlgorithmPanel.vue'
+const route = useRoute(), router = useRouter(), auth = useAuth()
+const source = ref('ml'), algorithm = ref('content'), selected = ref(''), selectedGenres = ref<string[]>([])
+const genreOptions = ['Action', 'Adventure', 'Animation', 'Children', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'IMAX', 'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western']
+const userPage = ref(1), users = useRemote<Page<HistoryUser>>(), ratings = useRemote<Page<Movie>>()
+const ratingPage = ref(1), available = ref<Algorithm[]>([]), registryError = ref<unknown>(null)
+const algorithmGroups = computed(() => [
+  { label: '核心算法 · 学生实现', items: available.value.filter(a => ['content', 'itemcf', 'als'].includes(a.algorithm)) },
+  { label: '配套策略 · 热门与冷启动', items: available.value.filter(a => ['popular', 'cold_start'].includes(a.algorithm)) },
+])
+const evaluationError = ref<unknown>(null), evaluationPending = ref(false), evaluationMissing = ref(false)
+const evaluation = ref<EvaluationSummary | null>(null)
+const warmMetrics = computed(() => evaluation.value?.items.filter(row => row.partition === 'validation') || [])
+const coldMetrics = computed(() => evaluation.value?.items.filter(row => row.partition.startsWith('cold-')) || [])
+const percent = (value: number) => `${(value * 100).toFixed(2)}%`
+const subject = computed(() => source.value === 'ml' ? (selected.value ? `ml:${selected.value}` : '') : auth.account?.subject_key || '')
+const endpoint = computed(() => {
+  if (!subject.value) return null
+  const path = source.value === 'ml' ? `/demo/history-users/${selected.value}/recommendations/${algorithm.value}` : `/me/recommendations/${algorithm.value}`
+  return algorithm.value === 'cold_start' && selectedGenres.value.length ? `${path}?genres=${encodeURIComponent(selectedGenres.value.join(','))}` : path
+})
+const modelVersion = computed(() => ({ content:'content-genres-v1', itemcf:'itemcf-cosine-v1', popular:'popular-bayes-v1', cold_start:'cold-start-genres-v1', als:'spark-als-explicit-v1' } as Record<string, string>)[algorithm.value] || '等待算法接入')
+function updateUrl() { void router.replace({ path:'/experiments', query:{ source:source.value, algorithm:algorithm.value, ...(selected.value ? {user:selected.value} : {}), ...(selectedGenres.value.length ? {genres:selectedGenres.value.join(',')} : {}) } }) }
+async function fetchUsers(page = userPage.value) { userPage.value = page; await users.load(async () => (await http.get<Page<HistoryUser>>('/demo/history-users',{params:{page,per_page:20}})).data) }
+function fetchRatings() { if (source.value !== 'ml' || !selected.value) return; return ratings.load(async () => (await http.get<Page<Movie>>(`/demo/history-users/${encodeURIComponent(selected.value)}/ratings`,{params:{page:ratingPage.value,per_page:10}})).data) }
+async function fetchRegistry() { try { available.value=(await http.get<{items:Algorithm[]}>('/experiments/algorithms')).data.items; registryError.value=null } catch(e) { registryError.value=e } }
+async function fetchEvaluation() { evaluationPending.value=true; evaluationError.value=null; evaluationMissing.value=false; try { evaluation.value=(await http.get<EvaluationSummary>('/experiments/evaluations')).data } catch(e) { if(e instanceof ApiError && e.status===501 && e.code==='EVALUATION_NOT_IMPLEMENTED') evaluationMissing.value=true; else evaluationError.value=e } finally { evaluationPending.value=false } }
+watch(() => route.query, () => { source.value=route.query.source==='app'?'app':'ml'; algorithm.value=typeof route.query.algorithm==='string' && /^[a-z_]+$/.test(route.query.algorithm) ? route.query.algorithm:'content'; selected.value=typeof route.query.user==='string' && /^[1-9][0-9]*$/.test(route.query.user)?route.query.user:''; selectedGenres.value=typeof route.query.genres==='string' ? [...new Set(route.query.genres.split(',').filter(Boolean))].slice(0,5) : [] }, {immediate:true})
+watch(() => [selected.value,source.value], () => {ratingPage.value=1; void fetchRatings()})
+void fetchUsers(); void fetchRegistry(); void fetchEvaluation(); void fetchRatings()
+</script>
+<template>
+  <div class="page"><div class="page-heading"><p class="eyebrow">RECOMMENDATION LAB</p><h1>推荐实验室<span class="heading-dot">.</span></h1><p>从一位观众的历史出发，探索不同算法的推荐结果。</p></div><div class="lab-notice"><span class="status-pill">课程实验</span><p>历史用户只读；注册账号与匿名用户相互隔离。内容推荐、热门榜单、冷启动、ItemCF、Spark ALS和离线评价均已接入。</p></div>
+    <div class="lab-layout"><aside class="lab-controls"><h2>实验设置</h2><label for="subject-source">用户来源</label><el-select id="subject-source" v-model="source" @change="updateUrl"><el-option label="MovieLens 历史用户（只读）" value="ml" /><el-option label="当前注册账号" value="app" /></el-select><template v-if="source==='ml'"><label for="history-user">选择历史用户</label><el-select id="history-user" v-model="selected" placeholder="请从真实用户列表选择" @change="updateUrl"><el-option v-for="u in users.data.value?.items" :key="u.ml_user_id" :label="`${u.subject_key} · ${u.evaluation_role}`" :value="u.ml_user_id" /></el-select><StatePanel v-if="users.error.value" :error="users.error.value" @retry="fetchUsers()" /><p v-if="users.loading.value" class="muted" role="status">正在加载用户…</p><div class="user-pager"><el-button :disabled="userPage===1 || users.loading.value" @click="fetchUsers(userPage-1)">上一组</el-button><span>{{ userPage }} / {{ Math.ceil((users.data.value?.total || 0)/20) || 1 }}</span><el-button :disabled="!users.data.value || userPage*20>=users.data.value.total || users.loading.value" @click="fetchUsers(userPage+1)">下一组</el-button></div><p class="form-hint">按原始用户ID分页，支持全部课堂历史用户。</p></template><div v-else class="current-subject"><p>{{ auth.account?.login_name || '请先登录注册账号' }}</p><span>{{ auth.account?.subject_key || '尚未登录' }}</span><RouterLink v-if="!auth.account" to="/login" class="text-link">前往登录 →</RouterLink></div><label for="algorithm-select">推荐算法</label><el-select id="algorithm-select" v-model="algorithm" @change="updateUrl"><el-option-group v-for="group in algorithmGroups" :key="group.label" :label="group.label"><el-option v-for="a in group.items" :key="a.algorithm" :label="a.algorithm" :value="a.algorithm" /></el-option-group></el-select><template v-if="algorithm==='cold_start'"><label for="genre-select">新用户类型偏好 <span class="optional-label">可选，最多5项</span></label><el-select id="genre-select" v-model="selectedGenres" multiple :multiple-limit="5" filterable collapse-tags placeholder="不选则展示非个性化热门榜单" @change="updateUrl"><el-option v-for="genre in genreOptions" :key="genre" :label="genre" :value="genre" /></el-select><p class="form-hint">无历史交互时可用类型偏好改变推荐；有评分或收藏时，系统切换到 ItemCF 个性化结果。</p></template><div class="algorithm-scope"><p><strong>已接入</strong>内容推荐、ItemCF协同过滤、热门榜单、类型偏好冷启动、Spark ALS与离线评价。</p></div><StatePanel v-if="registryError" :error="registryError" @retry="fetchRegistry" /><div class="model-info"><span>当前对象</span><strong>{{ subject || '未选择' }}</strong><span>模型版本</span><strong>{{ modelVersion }}</strong><span>运行模式</span><strong>business · 只读实验入口</strong></div></aside>
+    <div class="lab-results"><AlgorithmPanel :label="`${algorithm} · 推荐结果`" :endpoint="endpoint" :empty-subject="source==='ml' ? '请选择历史用户' : '登录后体验'" /><section v-if="source==='ml'" class="history-panel"><div class="section-top"><h2>历史评分</h2><span class="status-pill">{{ subject || '未选择用户' }} · 只读</span></div><StatePanel :loading="ratings.loading.value" :error="ratings.error.value" :empty="!selected || !!ratings.data.value && !ratings.data.value.items.length" title="选择一位历史观众" description="这里将显示真实历史评分，不提供修改入口。" @retry="fetchRatings"><div class="table-scroll"><el-table :data="ratings.data.value?.items || []" aria-label="历史用户只读评分表"><el-table-column label="电影" min-width="200"><template #default="scope"><RouterLink :to="`/movies/${scope.row.movie_id}`" class="text-link">{{ scope.row.movielens_title }}</RouterLink></template></el-table-column><el-table-column prop="movie_id" label="电影ID" width="100" /><el-table-column prop="rating" label="历史评分" width="100" /></el-table></div><PageNav :page="ratingPage" :size="10" :total="ratings.data.value?.total || 0" @change="ratingPage=$event;fetchRatings()" /></StatePanel></section><section class="evaluation-panel"><div class="section-top"><h2>离线评价 · 准确率</h2><span class="small-label">PRECISION@10 / RECALL@10</span></div><StatePanel :loading="evaluationPending" :error="evaluationError" @retry="fetchEvaluation"><div v-if="evaluation" class="evaluation-content"><p class="form-hint">真实冻结验证集 · 评分≥4.0 为相关电影 · Top10 排除训练已看电影。准确率使用 Precision@10；召回率使用 Recall@10。数值为离线批量计算，不是当前用户个人准确率。</p><h3>历史用户 · 同一验证集横向比较</h3><div class="table-scroll"><el-table :data="warmMetrics" aria-label="四种算法验证集准确率与召回率"><el-table-column prop="algorithm" label="算法" min-width="120" /><el-table-column label="准确率 P@10" min-width="130"><template #default="scope">{{ percent(scope.row.precision_at_10) }}</template></el-table-column><el-table-column label="召回率 R@10" min-width="130"><template #default="scope">{{ percent(scope.row.recall_at_10) }}</template></el-table-column><el-table-column prop="user_count" label="评价用户" min-width="100" /><el-table-column label="用户覆盖" min-width="100"><template #default="scope">{{ percent(scope.row.user_coverage) }}</template></el-table-column></el-table></div><h3>冷启动 · 独立用户集合</h3><div class="table-scroll"><el-table :data="coldMetrics" aria-label="冷启动算法准确率与召回率"><el-table-column prop="partition" label="冷启动场景" min-width="130" /><el-table-column label="准确率 P@10" min-width="130"><template #default="scope">{{ percent(scope.row.precision_at_10) }}</template></el-table-column><el-table-column label="召回率 R@10" min-width="130"><template #default="scope">{{ percent(scope.row.recall_at_10) }}</template></el-table-column><el-table-column prop="user_count" label="评价用户" min-width="100" /><el-table-column label="用户覆盖" min-width="100"><template #default="scope">{{ percent(scope.row.user_coverage) }}</template></el-table-column></el-table></div><small class="form-hint">冷启动用户与历史用户并非同一集合，因此两表不直接排名；k0 为零行为热门回退，k5 为五条支持行为。</small></div><div v-else class="evaluation-empty"><span class="status-pill">{{ evaluationMissing ? '尚未实现' : '等待接入' }}</span><p>暂无真实离线评价结果。</p><small>训练仅允许使用固定 train；此页面不连接 evaluation 数据库。</small></div></StatePanel></section></div></div>
+  </div>
+</template>
+
+<style scoped>
+.algorithm-scope { margin-top: 14px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.algorithm-scope p + p { margin-top: 10px; }
+.algorithm-scope strong { display: block; color: var(--text); font-weight: 500; }
+.evaluation-content { padding: 24px 28px 30px; }
+.evaluation-content > .form-hint { display: block; margin: 0 0 24px; line-height: 1.7; }
+.evaluation-content h3 { margin: 24px 0 14px; font-size: 16px; font-weight: 650; color: var(--text); }
+.evaluation-content .table-scroll { overflow-x: auto; }
+.evaluation-content .table-scroll + h3 { margin-top: 30px; }
+@media (max-width: 760px) { .evaluation-content { padding: 18px 14px; } }
+</style>
